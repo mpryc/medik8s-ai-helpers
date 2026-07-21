@@ -21,6 +21,8 @@ The `medik8s-release:verify-bundle` command validates that an operator bundle is
 4. **Bundle image pullability**: can the bundle image be pulled and inspected
 5. **FBC consistency**: does `operator-versions.yaml` match the bundle's replaces/skipRange
 6. **Upstream-version label**: does the container carry the `upstream-version` label linking to source commit
+7. **Upstream tag**: does `v<version>` tag exist in the upstream GitHub repo
+8. **Community release**: do community images exist on `quay.io/medik8s/` for this version
 
 ## Implementation
 
@@ -94,7 +96,27 @@ skopeo inspect "docker://quay.io/redhat-user-workloads/rhwa-tenant/${repo}/${pre
     | jq '.Labels["upstream-version"]'
 ```
 
-### Phase 5: Report
+### Phase 5: Check Upstream Tag and Community Release
+Verify that the upstream release steps were completed for this version.
+```bash
+# Check upstream tag exists
+gh api repos/medik8s/${repo}/git/refs/tags/v${version} 2>/dev/null && echo "TAG EXISTS" || echo "TAG MISSING"
+
+# Check community images exist on quay.io/medik8s
+for suffix in "" "-bundle" "-catalog"; do
+    skopeo inspect "docker://quay.io/medik8s/${repo}${suffix}:v${version}" > /dev/null 2>&1 \
+        && echo "OK: ${repo}${suffix}:v${version}" \
+        || echo "MISSING: ${repo}${suffix}:v${version}"
+done
+```
+
+**Why this matters:** The downstream Z-stream version (e.g., 0.13.1) is set in the
+midstream bundle-hack/CSV and built by Konflux. But the corresponding upstream steps
+— tagging the release branch, building community images, creating community-operators
+PRs — must also be completed. Without them, the community and downstream versions
+diverge, and community users cannot access fixes shipped in the Z-stream.
+
+### Phase 6: Report
 ```
 BUNDLE VERIFICATION: ${repo} v${version}
   CSV version:        PASS (0.13.1)
@@ -105,8 +127,15 @@ BUNDLE VERIFICATION: ${repo} v${version}
   FBC replaces match: PASS
   FBC skipRange match:PASS
   Upstream-version:   PASS (release-0.13-d6e798a)
-  Overall:            VERIFIED
+  Upstream tag:       PASS/FAIL (v0.13.1 exists/missing on github.com/medik8s/${repo})
+  Community images:   PASS/FAIL (quay.io/medik8s/${repo}[-bundle|-catalog]:v${version})
+  Overall:            VERIFIED / ISSUES FOUND
 ```
+
+**Severity levels:**
+- Upstream tag or community images **MISSING** → report as **WARN** (bundle itself is valid,
+  but the upstream release process is incomplete — flag for follow-up)
+- CSV/FBC field mismatches → report as **FAIL** (bundle is broken)
 
 ## Return Value
 Verification result table with PASS/FAIL per check.
