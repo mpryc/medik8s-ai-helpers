@@ -1,0 +1,13 @@
+{
+  "name": "medik8s-ai-helpers",
+  "owner": {
+    "name": "medik8s"
+  },
+  "plugins": [
+    {
+      "name": "medik8s-release",
+      "source": "./plugins/medik8s-release",
+      "description": "Release workflows for medik8s operators — upstream community releases, downstream midstream preparation, FBC catalog management, and Konflux release orchestration"
+    }
+  ]
+}

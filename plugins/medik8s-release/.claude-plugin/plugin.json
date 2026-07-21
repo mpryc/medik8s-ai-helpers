@@ -1,0 +1,8 @@
+{
+  "name": "medik8s-release",
+  "description": "Release workflows for medik8s/RHWA operators — upstream tagging, community catalog PRs, downstream midstream version bumps, FBC catalog generation, Konflux release orchestration, and cross-repo verification",
+  "version": "1.0.0",
+  "author": {
+    "name": "Medik8s / Dragonfly Team"
+  }
+}
