@@ -44,7 +44,7 @@ Upstream (GitHub/medik8s)  -->  Midstream (GitLab/dragonfly)  -->  Downstream (K
 From within a Claude Code session:
 
 ```
-/plugin marketplace add medik8s/medik8s-ai-helpers
+/plugin marketplace add mpryc/medik8s-ai-helpers
 /plugin install medik8s-release@medik8s-ai-helpers
 /reload-plugins
 ```
