@@ -138,6 +138,20 @@ Summary of FBC changes and verification results.
 - `--verify-only`: Only run verification, don't make changes
 - `--dry-run`: Show what would change without modifying files
 
+## Pre-Bootstrap FBC for Next OCP Versions
+
+After a Y-stream GA release, immediately prepare FBC catalogs for upcoming OCP versions to prevent stale operator versions from appearing in new OCP clusters (RHWA-616). This involves:
+
+1. Adding current supported versions to `releases.yaml` for next OCP versions
+2. Generating and releasing the FBC catalogs
+3. Submitting a pruning exception MR to `releng/konflux-release-data` with per-arch image digests:
+   ```bash
+   skopeo inspect --raw "docker://<SNAPSHOT_IMAGE>" | jq -r '.manifests[] | "\(.digest) (\(.platform.architecture))"'
+   ```
+4. Include both per-arch digests AND the OCI index (manifest list) digest in the exception
+
+See the "OCP Catalog Bootstrap Problem" section in the FBC Management skill for full details.
+
 ## See Also
 - `/medik8s-release:downstream` — Prepare midstream repos (run before FBC update)
 - `/medik8s-release:verify-bundle` — Validate individual operator bundles

@@ -15,6 +15,7 @@ The Medik8s Release plugin provides Claude Code commands for automating the full
 | `/medik8s-release:sync` | Sync all local repos with remotes |
 | `/medik8s-release:inspect` | Deep inspection of what a build contains (provenance, Go version, labels) |
 | `/medik8s-release:audit` | Full release checklist with live progress tracking |
+| `/medik8s-release:fbc-bootstrap` | Prepare FBC for upcoming OCP versions + generate pruning exceptions (RHWA-616) |
 
 ## Skills
 

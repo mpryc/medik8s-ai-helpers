@@ -1,6 +1,6 @@
 # Downstream Midstream Preparation
 
-Detailed guide for preparing midstream (GitLab/dragonfly) operator repositories for a downstream release.
+Detailed guide for preparing midstream (GitLab/dragonfly) operator repositories for a downstream release. Maps primarily to **JIRA 02: Update Downstream Repo**.
 
 ## Repository Structure
 

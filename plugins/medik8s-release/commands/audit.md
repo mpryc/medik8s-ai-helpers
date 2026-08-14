@@ -18,49 +18,86 @@ This command answers: "where are we in the release process and what do I need to
 
 ### Checklist Stages
 
-The audit checks the following stages in order. Each stage can be: DONE, IN PROGRESS, NOT STARTED, or BLOCKED.
+The audit stages map directly to the JIRA child task structure (e.g., RHWA-1333). Each stage can be: DONE, IN PROGRESS, NOT STARTED, or BLOCKED.
 
-**1. Upstream Preparation**
+**Phase 0. Upstream Release** (prerequisite — before JIRA creation)
 - [ ] Code merged to main / release branch
 - [ ] CI passing on release branch
 - [ ] Release tag created (`v<version>`)
 - [ ] GitHub Release exists (draft or published)
-
-**2. Upstream Images**
 - [ ] Operator image on `quay.io/medik8s/<op>:v<version>`
 - [ ] Bundle image on `quay.io/medik8s/<op>-bundle:v<version>`
 - [ ] Catalog image on `quay.io/medik8s/<op>-catalog:v<version>`
+- [ ] K8s community PR created/merged (skip MDR)
+- [ ] OKD community PR created/merged
 
-**3. Community Catalog PRs**
-- [ ] K8s community PR created (skip MDR)
-- [ ] K8s community PR merged
-- [ ] OKD community PR created
-- [ ] OKD community PR merged
+**JIRA 01. Konflux Update** — Update patch version for RPs
+- [ ] ReleasePlans exist for stage and prod in `rhwa-tenant`
+- [ ] ReleasePlanAdmissions exist
+- [ ] Application with components visible at Konflux UI
+- [ ] ArgoCD sync healthy
 
-**4. Midstream Preparation**
+**JIRA 02. Update Downstream Repo** — Midstream preparation + FBC
 - [ ] Midstream branch exists (Y-stream) / is correct (Z-stream)
 - [ ] `scripts/update-version.sh` has target version
 - [ ] `.tekton/*.yaml` has correct `semver-version`
 - [ ] `bundle-hack/update_bundle.sh` has correct `PREVIOUS_VERSION`
 - [ ] `bundle-hack/update_bundle.sh` has correct `SKIP_RANGE_LOWER`
+- [ ] Version in FBC `operator-versions.yaml` (with `update-bundle: true`)
+- [ ] Version in FBC `releases.yaml`
+- [ ] FBC catalog generated and verified
 
-**5. Konflux Builds**
+**JIRA 03. Verify Images** — Builds, Enterprise Contract, stage release
 - [ ] Operator image built in `quay.io/redhat-user-workloads/rhwa-tenant/`
 - [ ] Bundle image built in `quay.io/redhat-user-workloads/rhwa-tenant/`
 - [ ] Bundle image digest from `operator-versions.yaml` is pullable
+- [ ] Enterprise Contract (ECP) passing
+- [ ] Non-FBC stage release succeeded
+- [ ] FBC stage release succeeded
+- [ ] Stage advisory exists in advisory data repository
+- [ ] FIPS compliance verified (`fbc-fips-check-oci-ta`)
+- [ ] Disconnected environment support verified
 
-**6. FBC Catalog**
-- [ ] Version in `operator-versions.yaml`
-- [ ] Version in `releases.yaml`
-- [ ] Catalog generated
-- [ ] Bundle images verified (`verify-bundle-images.sh`)
-- [ ] `update-bundle: true` set (pre-GA) / removed (post-GA)
+**JIRA 04. Final Tests** — Pre-release validation
+- [ ] Stage/prod RP/RPA alignment reviewed (minimal differences)
+- [ ] JIRA release notes (type, text, status) filled in
+- [ ] CVE data added to release manifests (if Go/dep bump resolves CVEs → RHSA)
+- [ ] ProdSec vulnerability trackers added to `issues.fixed`
+- [ ] GA Release YAMLs prepared (`create_non_fbc_release`, `create_fbc_release`)
+- [ ] Operator installable from stage FBC
+- [ ] Build labels verified (version, commit, date)
+- [ ] E2e tests passed on stage cluster
 
-**7. Release & Errata**
-- [ ] Konflux Release CRs created
-- [ ] Downstream tags created
-- [ ] Errata advisory exists
-- [ ] Images mirrored to `registry.redhat.io`
+**JIRA 05. QE Testing** — Quality Engineering validation
+- [ ] CatalogSource with IIB from stage created
+- [ ] Testing status sheet created/updated
+- [ ] Regression tests passed
+- [ ] Disconnected environment tested
+- [ ] OCP upgrade tests passed (n-1 → n)
+- [ ] All advisory bugs in verified state
+
+**JIRA 06. Docs Checklist** — Documentation and advisory content
+- [ ] Release notes created
+- [ ] User guide updates for new features/bug fixes
+- [ ] Advisory metadata reviewed (synopsis, topic, description, solution)
+- [ ] Fixed issues attached and public in JIRA
+- [ ] RHWA documentation version correct
+
+**JIRA 07. GA Release** — Production release day
+- [ ] Non-FBC Release CRs created and succeeded
+- [ ] Advisory visible in prod advisory repo and customer portal
+- [ ] Images accessible from `registry.redhat.io`
+- [ ] FBC Release CRs created and succeeded (per OCP version)
+- [ ] Operators visible in OperatorHub for target OCP versions
+- [ ] Downstream repos tagged
+- [ ] Post-GA FBC cleanup (remove `update-bundle: true`, switch to `registry.redhat.io`)
+
+**Post-GA. Next OCP Catalog Preparation** (Y-stream only) — use `/medik8s-release:fbc-bootstrap`
+- [ ] FBC catalogs prepared for next OCP versions (e.g., 4.23, 5.0)
+- [ ] FBC snapshots built in Konflux
+- [ ] `konflux-release-data` pruning exception MR submitted with per-arch digests
+- [ ] Pruning exception MR approved (2 approvals required) and merged
+- [ ] Pre-bootstrap FBC released before next OCP catalog bootstrap (see RHWA-616)
 
 ## Implementation
 
@@ -79,7 +116,7 @@ PATCH=$(echo $version | cut -d. -f3)
 ### Phase 2: Check Each Stage
 For each operator (or single if `--operator` specified):
 
-#### Stage 1: Upstream
+#### Phase 0: Upstream
 ```bash
 # Tag exists?
 gh api repos/medik8s/${repo}/git/refs/tags/v${version} 2>/dev/null && echo "DONE" || echo "NOT STARTED"
@@ -89,28 +126,32 @@ gh release view v${version} --repo medik8s/${repo} --json isDraft,isPrerelease 2
 
 # Release branch? (Y-stream only)
 gh api repos/medik8s/${repo}/branches --jq ".[].name" | grep "^release-${major}.${minor}$"
-```
 
-#### Stage 2: Images
-```bash
+# Upstream images
 for suffix in "" "-bundle" "-catalog"; do
     curl -sf "https://quay.io/api/v1/repository/medik8s/${repo}${suffix}/tag/?specificTag=v${version}" \
         | jq -e '.tags | length > 0' > /dev/null 2>&1 && echo "DONE" || echo "NOT STARTED"
 done
-```
 
-#### Stage 3: Community PRs
-```bash
-# K8s
+# Community PRs
 gh pr list --repo k8s-operatorhub/community-operators \
     --head "add-${repo}-${version}-k8s" --state all --json state,url
-
-# OKD
 gh pr list --repo redhat-openshift-ecosystem/community-operators-prod \
     --head "add-${repo}-${version}-okd-${ocp_version}" --state all --json state,url
 ```
 
-#### Stage 4: Midstream
+#### JIRA 01: Konflux Update
+```bash
+# Check ReleasePlans exist (requires oc login to Konflux)
+oc get releaseplan -n rhwa-tenant -l "operator=${prefix}" -o json 2>/dev/null \
+    | jq -r '.items[].metadata.name' || echo "N/A — not logged in to Konflux"
+
+# Check ReleasePlanAdmissions
+oc get releaseplanadmission -n rhwa-tenant -l "operator=${prefix}" -o json 2>/dev/null \
+    | jq -r '.items[].metadata.name' || echo "N/A"
+```
+
+#### JIRA 02: Midstream + FBC
 Discover the midstream clone. **Do NOT assume any fixed directory layout.**
 ```bash
 # Discover midstream clone by repo name + GitLab remote
@@ -130,38 +171,6 @@ fi
 ```
 If the midstream clone is not found locally, skip this stage and report it as "N/A — no local clone found".
 
-#### Stage 5: Konflux
-```bash
-# Check if downstream images exist (use quay.io API — no auth needed, faster than skopeo)
-for type in operator bundle; do
-    component="${prefix}-${type}-${minor}"
-    result=$(curl -sf "https://quay.io/api/v1/repository/redhat-user-workloads/rhwa-tenant%2F${repo}%2F${component}/tag/?limit=1&onlyActiveTags=true" \
-        | jq -r '.tags[0].last_modified // "not found"')
-    echo "${component}: ${result}"
-done
-
-# Verify bundle image digests from operator-versions.yaml are actually pullable
-# This confirms the pinned @sha256: reference in FBC points to a real, accessible image
-img=$(python3 -c "
-import yaml
-with open('$FBC_DIR/operator-versions.yaml') as f:
-    data = yaml.safe_load(f)
-for operator in data['operators']:
-    if operator['name'] == '$repo':
-        for v in operator['versions']:
-            if v['name'] == '$version':
-                print(v.get('bundle-image', ''))
-                break
-")
-if [ -n "$img" ]; then
-    skopeo inspect --no-tags "docker://${img}" >/dev/null 2>&1 \
-        && echo "Bundle digest VERIFIED: pullable" \
-        || echo "Bundle digest FAILED: not pullable"
-fi
-```
-
-#### Stage 6: FBC
-Discover the FBC repo locally. **Do NOT assume any fixed directory layout.**
 ```bash
 # Discover rhwa-fbc repo
 FBC_DIR=$(find "$HOME" -maxdepth 6 -type d -name "rhwa-fbc" 2>/dev/null | while read dir; do
@@ -184,73 +193,123 @@ fi
 ```
 If the FBC repo is not found locally, skip this stage and report it as "N/A — no local clone found".
 
-#### Stage 7: Release & Errata
+#### JIRA 03: Verify Images
 ```bash
-# Check downstream tags (uses MIDSTREAM_DIR discovered in Stage 4)
+# Check if downstream images exist (use quay.io API — no auth needed, faster than skopeo)
+for type in operator bundle; do
+    component="${prefix}-${type}-${minor}"
+    result=$(curl -sf "https://quay.io/api/v1/repository/redhat-user-workloads/rhwa-tenant%2F${repo}%2F${component}/tag/?limit=1&onlyActiveTags=true" \
+        | jq -r '.tags[0].last_modified // "not found"')
+    echo "${component}: ${result}"
+done
+
+# Verify bundle image digests from operator-versions.yaml are actually pullable
+img=$(python3 -c "
+import yaml
+with open('$FBC_DIR/operator-versions.yaml') as f:
+    data = yaml.safe_load(f)
+for operator in data['operators']:
+    if operator['name'] == '$repo':
+        for v in operator['versions']:
+            if v['name'] == '$version':
+                print(v.get('bundle-image', ''))
+                break
+")
+if [ -n "$img" ]; then
+    skopeo inspect --no-tags "docker://${img}" >/dev/null 2>&1 \
+        && echo "Bundle digest VERIFIED: pullable" \
+        || echo "Bundle digest FAILED: not pullable"
+fi
+
+# Check stage advisory exists
+curl -sf "https://gitlab.cee.redhat.com/api/v4/projects/rhtap-release%2Fadvisories/repository/tree?path=data/advisories/rhwa-tenant&ref=main" 2>/dev/null \
+    | jq -r '.[].name' || echo "N/A — GitLab API not accessible (VPN required)"
+```
+
+#### JIRA 04-06: Manual Steps
+Stages 04 (Final Tests), 05 (QE Testing), and 06 (Docs Checklist) require human verification. The audit reports their status based on JIRA state if accessible, otherwise marks them as "MANUAL CHECK REQUIRED".
+
+#### JIRA 07: GA Release
+```bash
+# Check downstream tags (uses MIDSTREAM_DIR discovered earlier)
 if [ -n "$MIDSTREAM_DIR" ]; then
   git -C "$MIDSTREAM_DIR" tag -l "v${version}"
 fi
 
 # Konflux releases (requires oc login)
 oc get release -n rhwa-tenant -l "operator=${prefix}" --sort-by=.metadata.creationTimestamp -o json 2>/dev/null | jq '.items[-1].metadata.name'
+
+# Check if images are on registry.redhat.io (post-GA)
+skopeo inspect --no-tags "docker://registry.redhat.io/workload-availability/${registry_name}-rhel9-operator:v${version}" >/dev/null 2>&1 \
+    && echo "DONE: image on registry.redhat.io" \
+    || echo "NOT YET: not on registry.redhat.io"
 ```
 
 ### Phase 3: Generate Checklist Report
 ```
 RELEASE AUDIT: RHWA 4.22-1 (Z-stream)
 ══════════════════════════════════════
+JIRA: RHWA-1333
 
 SNR v0.13.1 (replaces 0.13.0)
 ┌─────────────────────────────────────────────────────────┐
-│ 1. Upstream Preparation                                 │
+│ Phase 0. Upstream Release (prerequisite)                │
 │    [x] Release tag v0.13.1                              │
 │    [x] GitHub Release (published)                       │
-│                                                         │
-│ 2. Upstream Images                                      │
 │    [x] quay.io/medik8s/self-node-remediation:v0.13.1    │
-│    [x] quay.io/medik8s/snr-bundle:v0.13.1              │
-│    [x] quay.io/medik8s/snr-catalog:v0.13.1             │
-│                                                         │
-│ 3. Community Catalog PRs                                │
 │    [x] K8s PR #847 (merged)                             │
 │    [ ] OKD PR — NOT STARTED                             │
 │                                                         │
-│ 4. Midstream Preparation                                │
+│ JIRA 01. Konflux Update                                 │
+│    [x] ReleasePlans exist (snr-0-13-stage, snr-0-13-prod)│
+│    [x] RPA approved                                     │
+│                                                         │
+│ JIRA 02. Update Downstream Repo                         │
 │    [x] Branch snr-0-13 (semver: v0.13.1)                │
 │    [x] PREVIOUS_VERSION=0.13.0                          │
 │    [!] SKIP_RANGE_LOWER still set (should be commented  │
 │        out for first Z-stream)                          │
-│                                                         │
-│ 5. Konflux Builds                                       │
-│    [x] Operator image built (2026-07-20)                │
-│    [x] Bundle image built (2026-07-20)                  │
-│                                                         │
-│ 6. FBC Catalog                                          │
 │    [x] In operator-versions.yaml                        │
 │    [x] In releases.yaml                                 │
-│    [ ] update-bundle: true (not yet released to prod)   │
 │                                                         │
-│ 7. Release & Errata                                     │
+│ JIRA 03. Verify Images                                  │
+│    [x] Operator image built (2026-07-20)                │
+│    [x] Bundle image built (2026-07-20)                  │
+│    [x] Bundle digest pullable                           │
+│    [ ] Stage release — NOT VERIFIED                     │
+│                                                         │
+│ JIRA 04. Final Tests                                    │
+│    [ ] MANUAL CHECK — verify in JIRA                    │
+│                                                         │
+│ JIRA 05. QE Testing                                     │
+│    [ ] MANUAL CHECK — verify in JIRA                    │
+│                                                         │
+│ JIRA 06. Docs Checklist                                 │
+│    [ ] MANUAL CHECK — verify in JIRA                    │
+│                                                         │
+│ JIRA 07. GA Release                                     │
 │    [ ] Konflux Release CR — NOT STARTED                 │
 │    [ ] Downstream tag — NOT STARTED                     │
-│    [ ] Errata advisory — NOT STARTED                    │
+│    [ ] registry.redhat.io — NOT YET                     │
 └─────────────────────────────────────────────────────────┘
 
 NEXT STEPS:
   1. Create OKD community PR for SNR 0.13.1
   2. Fix SKIP_RANGE_LOWER in bundle-hack (comment out for Z-stream)
-  3. Create Konflux Release CRs (use dragonfly/tools/releases/create_release.sh)
-  4. Tag downstream repos (use dragonfly/tools/releases/tag_downstream.sh)
+  3. Complete stage release test (JIRA 03)
+  4. QE testing with IIB from stage (JIRA 05)
+  5. Create GA Release YAMLs (JIRA 04)
+  6. Create Konflux Release CRs on release day (JIRA 07)
 
 NHC v0.12.1 (replaces 0.12.0)
   ...
 ```
 
 ### Phase 4: Provide Actionable Next Steps
-Based on the first incomplete stage for each operator, suggest the exact command or action needed.
+Based on the first incomplete stage for each operator, suggest the exact command or action needed. Map each action to its JIRA child task number.
 
 ## Return Value
-Formatted checklist with progress indicators and actionable next steps.
+Formatted checklist with progress indicators and actionable next steps, organized by JIRA child task.
 
 ## Examples
 
@@ -280,3 +339,4 @@ Formatted checklist with progress indicators and actionable next steps.
 - `/medik8s-release:inspect` — Deep inspection of what a build contains
 - `/medik8s-release:upstream` — Execute upstream release steps
 - `/medik8s-release:downstream` — Execute midstream preparation steps
+- `/medik8s-release:fbc-bootstrap` — Prepare FBC for next OCP versions (post-GA)
