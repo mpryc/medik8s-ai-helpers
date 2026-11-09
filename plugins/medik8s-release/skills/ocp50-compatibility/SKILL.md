@@ -258,7 +258,103 @@ make run-tests 2>&1 | tee $TMPDIR/<op>-main.log
 
 > **MDR note:** NHC CRD alone is not enough — NHC controller must be running (CSV Succeeded). Without it, `mdr_remediation.go` times out waiting for NHC to trigger the MDR CR.
 
-### SNR / NHC / NMO / SBR
+### NHC (`nhc-upstream e2e` — different test repo)
+
+NHC uses the upstream `node-healthcheck-operator` e2e suite **instead of** `rhwa-system-tests`.
+The nhc-upstream suite is an **additional verification** alongside any rhwa-system-tests run.
+
+**Required env vars:**
+```bash
+export OPERATOR_NS=openshift-workload-availability
+export SNRT_NAME=self-node-remediation-automatic-strategy-template
+```
+
+**NHC requires SNR installed** — subscribe both from the IIB catalog source.
+
+**Two-pass approach** (OCP-ONLY tests reboot nodes; start safe):
+
+```bash
+# Pass 1 — non-destructive (no SNR node reboots)
+cd $TMPDIR/repos/nhc-upstream   # clone: git clone --depth=1 https://github.com/medik8s/node-healthcheck-operator.git
+go test ./e2e/... -v \
+  -ginkgo.label-filter="NHC && !OCP-ONLY" \
+  -ginkgo.timeout=60m -timeout 70m 2>&1 | tee $TMPDIR/e2e-nhc-non-ocp.log
+
+# Pass 2 — OCP-ONLY (SNR node reboots; control plane reboot on 3-master cluster is survivable)
+# Pre-compile binary first to work around background-task timeout issues:
+go test -c ./e2e -o $TMPDIR/nhc-e2e.test
+$TMPDIR/nhc-e2e.test -test.v \
+  -ginkgo.label-filter="NHC && OCP-ONLY" \
+  -ginkgo.timeout=90m -test.timeout=100m 2>&1 | tee $TMPDIR/e2e-nhc-ocp-only.log
+```
+
+**Before each pass — clean up leftover resources from previous runs:**
+```bash
+oc delete nodehealthcheck test-nhc --ignore-not-found=true
+oc get machinehealthcheck -A | grep test-mhc && \
+  oc delete machinehealthcheck test-mhc -n <namespace> --ignore-not-found=true || true
+```
+
+**If a node gets stuck NotReady after a failed run** (e.g. kubelet stopped, no NHC to recover it):
+```bash
+# 1. Remove leftover Terminating condition if present
+oc patch node <node> --subresource=status --type=json \
+  -p='[{"op":"remove","path":"/status/conditions/<idx>"}]'
+
+# 2. Create a recovery NHC watching Ready=False AND Ready=Unknown
+cat <<EOF | oc apply -f -
+apiVersion: remediation.medik8s.io/v1alpha1
+kind: NodeHealthCheck
+metadata:
+  name: recovery-nhc
+spec:
+  selector:
+    matchExpressions:
+    - key: node-role.kubernetes.io/worker
+      operator: Exists
+  minHealthy: "49%"
+  unhealthyConditions:
+  - type: Ready
+    status: "False"
+    duration: 15s
+  - type: Ready
+    status: "Unknown"
+    duration: 15s
+  remediationTemplate:
+    apiVersion: self-node-remediation.medik8s.io/v1alpha1
+    kind: SelfNodeRemediationTemplate
+    name: self-node-remediation-automatic-strategy-template
+    namespace: openshift-workload-availability
+EOF
+# 3. Wait for node to recover, then delete recovery-nhc
+```
+
+**Expected outcomes (OCP 5.0.0-rc.5, IIB 1247268, NHC v5.8.0 + SNR v5.8.0):**
+
+| Test / Label | Description | Expected |
+|---|---|---|
+| `NHC && !OCP-ONLY` | Classic worker node remediation (SNR) | PASS — 1 spec |
+| `NHC && OCP-ONLY` — MHC interaction | NHC disabled when custom MachineHealthCheck exists | PASS |
+| `NHC && OCP-ONLY` — Escalating remediation | Dummy remediator times out → escalates to SNR → worker rebooted | PASS |
+| `NHC && OCP-ONLY` — Terminating node | NHC skips node with `Terminating=True` condition | PASS |
+| `NHC && OCP-ONLY` — Control plane | NHC+SNR remediates an unhealthy master node (3-master cluster required) | PASS |
+| `NHC && OCP-ONLY` — Console plugin | Console manifest served over HTTPS from plugin pod | PASS |
+
+**Total: 6/6 specs pass. All 12 suite specs: 6 passed, 6 skipped (non-NHC label).**
+
+**NHC-specific gotchas:**
+
+| Gotcha | Fix |
+|---|---|
+| `test-nhc already exists` on re-run | Delete `oc delete nodehealthcheck test-nhc --ignore-not-found=true` before each pass |
+| `test-mhc already exists` | Delete `oc delete machinehealthcheck test-mhc -A` before each pass |
+| Node `Ready=Unknown` (not `False`) stuck after failed run | Recovery NHC must watch BOTH `status: "False"` and `status: "Unknown"` |
+| `Terminating=True` condition left on node | NHC skips terminating nodes — patch it off before creating recovery NHC |
+| `go test` background task produces empty log | Pre-compile binary with `go test -c ./e2e -o nhc-e2e.test` and run directly |
+| OCP-ONLY tests cause worker AND control plane node reboots | Use `!OCP-ONLY` first to validate; then `OCP-ONLY` on a stable cluster (3 masters, AWS) |
+| Webhook admission test requires `pod-security.kubernetes.io/enforce: privileged` on namespace | Always create namespace with this label (Phase 2 install step) |
+
+### SNR / NMO / SBR
 
 Test expectations not yet documented. Add rows as each operator is tested.
 
