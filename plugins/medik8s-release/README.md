@@ -26,6 +26,14 @@ The Medik8s Release plugin provides Claude Code commands for automating the full
 | [downstream-prep](skills/downstream-prep/SKILL.md) | Midstream repository preparation guide |
 | [errata-process](skills/errata-process/SKILL.md) | Errata advisory lifecycle and steps |
 | [z-stream-process](skills/z-stream-process/SKILL.md) | Patch release specifics |
+| [fbc-snapshot-table](skills/fbc-snapshot-table/SKILL.md) | Generate operator snapshot table for MR description from a Konflux FBC release-to-stage URL |
+| [konflux-fbc-release-report](skills/konflux-fbc-release-report/SKILL.md) | Full release validation: snapshots → PLRs → advisories → skopeo → EC logs → HTML + Jira |
+| [troubleshoot-konflux](skills/troubleshoot_konflux/SKILL.md) | Diagnose and fix stuck bundle-nudge auto-merge MRs in dragonfly/rhwa-fbc |
+| [community-release-pr](skills/community-release-pr/SKILL.md) | Create K8S and/or OKD community operator release PRs for medik8s operators |
+| [ocp50-compatibility](skills/ocp50-compatibility/SKILL.md) | Run OCP 5.0 compatibility test cycle and fill Jira epic description + closing comment |
+| [medik8s-certsuite-validation](skills/medik8s-certsuite-validation/SKILL.md) | Validate certsuite exception docs against actual test results on OCP cluster |
+| [medik8s-github-report-status](skills/medik8s-github-report-status/SKILL.md) | PR/MR dashboard across medik8s GitHub org and dragonfly GitLab group |
+| [rpm-lockfile-update](skills/rpm-lockfile-update/SKILL.md) | Regenerate rpms.lock.yaml for Konflux hermetic builds (new arches or RPM changes) |
 
 ## Key Concepts
 
